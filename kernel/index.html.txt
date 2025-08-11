@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<title>SimKernel de Juárez Pérez José de Jesús</title>
+<style>
+  body {
+    background: #000;
+    color: #0f0;
+    font-family: 'Courier New', Courier, monospace;
+    margin: 0;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+  #terminal {
+    background: #000;
+    border: 2px solid #0f0;
+    padding: 20px;
+    width: 750px;
+    height: 520px;
+    overflow-y: auto;
+    box-sizing: border-box;
+    box-shadow: 0 0 15px #0f0;
+    display: flex;
+    flex-direction: column;
+  }
+  #output {
+    white-space: pre-wrap;
+    line-height: 1.3em;
+    flex-grow: 1;
+    overflow-y: auto;
+    margin-bottom: 4px;
+  }
+  #input-line {
+    display: flex;
+    align-items: center;
+  }
+  #prompt {
+    color: #0f0;
+    margin-right: 5px;
+    user-select: none;
+  }
+  #command-input {
+    background: transparent;
+    border: none;
+    color: #0f0;
+    outline: none;
+    font-family: monospace;
+    font-size: 16px;
+    flex-grow: 1;
+  }
+  #command-input.blink {
+    animation: blink 1s step-start 0s infinite;
+  }
+  @keyframes blink {
+    50% { opacity: 0; }
+  }
+  ::-webkit-scrollbar {
+    width: 8px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #0f0;
+  }
+  /* Editor modal styles */
+  #editor-modal {
+    position: fixed;
+    top: 10%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #000;
+    border: 2px solid #0f0;
+    box-shadow: 0 0 10px #0f0;
+    width: 600px;
+    height: 350px;
+    display: none;
+    flex-direction: column;
+    z-index: 9999;
+  }
+  #editor-textarea {
+    flex-grow: 1;
+    background: black;
+    color: #0f0;
+    border: none;
+    font-family: monospace;
+    font-size: 14px;
+    padding: 10px;
+    resize: none;
+    outline: none;
+  }
+  #editor-buttons {
+    display: flex;
+    justify-content: flex-end;
+    padding: 5px 10px;
+    border-top: 1px solid #0f0;
+  }
+  #editor-buttons button {
+    background: #000;
+    border: 1px solid #0f0;
+    color: #0f0;
+    margin-left: 10px;
+    padding: 5px 10px;
+    cursor: pointer;
+    font-family: monospace;
+  }
+  #editor-buttons button:hover {
+    background: #0f0;
+    color: #000;
+  }
+</style>
+</head>
+<body>
+
+<div id="terminal">
+  <div id="output"></div>
+  <div id="input-line" style="display:none;">
+    <span id="prompt">&gt;</span>
+    <input type="text" id="command-input" autofocus autocomplete="off" spellcheck="false" />
+  </div>
+</div>
+
+<!-- Editor modal -->
+<div id="editor-modal">
+  <textarea id="editor-textarea" spellcheck="false"></textarea>
+  <div id="editor-buttons">
+    <button id="save-edit">Guardar</button>
+    <button id="cancel-edit">Cancelar</button>
+  </div>
+</div>
+
+<script>
+  const output = document.getElementById('output');
+  const inputLine = document.getElementById('input-line');
+  const commandInput = document.getElementById('command-input');
+
+  // Editor modal elements
+  const editorModal = document.getElementById('editor-modal');
+  const editorTextarea = document.getElementById('editor-textarea');
+  const saveEditBtn = document.getElementById('save-edit');
+  const cancelEditBtn = document.getElementById('cancel-edit');
+
+  // Sistema de archivos simulado: estructura simple árbol
+  const fileSystem = {
+    '/': {
+      type: 'dir',
+      children: {}
+    }
+  };
+
+  let currentPath = '/';
+  let currentUser = null;
+  const validUser = {
+    username: 'admin',
+    password: '1234',
+    name: 'Juárez Pérez José de Jesús'
+  };
+
+  // Historial de comandos
+  const commandHistory = [];
+  let historyIndex = -1;
+
+  // Estado para editor
+  let editingFilePath = null;
+
+  // Estado para juego de adivinar número
+  let guessGameActive = false;
+  let guessGameNumber = null;
+  let guessGameAttempts = 0;
+
+  // Mensajes de arranque con delay y efecto tecleo
+  const bootMessages = [
+    "Iniciando SimKernel Ultra Avanzado v2.1...",
+    "Chequeando memoria RAM... OK",
+    "Detectando dispositivos USB... OK",
+    "Montando sistema de archivos... OK",
+    "Cargando drivers... OK",
+    "Inicializando subsistemas... OK",
+    "Sistema operativo simulado listo.",
+    ""
+  ];
+
+  // Función para imprimir texto con efecto tecleo
+  async function typeText(text, delay = 30) {
+    for (let i = 0; i < text.length; i++) {
+      output.textContent += text[i];
+      output.scrollTop = output.scrollHeight;
+      await new Promise(r => setTimeout(r, delay));
+    }
+    output.textContent += '\n';
+  }
+
+  // Función para mostrar el prompt personalizado y enfocar el input
+  function showPrompt() {
+    if (currentUser) {
+      document.getElementById('prompt').textContent = `${currentUser.username}@simkernel:${currentPath}$`;
+    } else {
+      document.getElementById('prompt').textContent = `guest@simkernel:${currentPath}$`;
+    }
+    inputLine.style.display = 'flex';
+    commandInput.disabled = false;
+    commandInput.classList.add('blink');
+    commandInput.focus();
+  }
+
+  // Función para ocultar input mientras escribe el texto con efecto tecleo
+  function hideInput() {
+    inputLine.style.display = 'none';
+  }
+
+  // Normaliza rutas para simplificar la navegación
+  function normalizePath(path) {
+    if (!path) return currentPath;
+    if (path.startsWith('/')) return path;
+    if (currentPath === '/') return '/' + path;
+    return currentPath + '/' + path;
+  }
+
+  // Obtener objeto nodo del filesystem dado un path
+  function getNode(path) {
+    const parts = path.split('/').filter(Boolean);
+    let node = fileSystem['/'];
+    for (const part of parts) {
+      if (!node.children[part]) return null;
+      node = node.children[part];
+    }
+    return node;
+  }
+
+  // Agregar nodo al filesystem
+  function addNode(path, node) {
+    const parts = path.split('/').filter(Boolean);
+    let parentPath = '/';
+    if (parts.length > 1) {
+      parentPath = '/' + parts.slice(0, -1).join('/');
+    }
+    const parent = getNode(parentPath);
+    if (!parent || parent.type !== 'dir') return false;
+    parent.children[parts[parts.length -1]] = node;
+    return true;
+  }
+
+  // Eliminar nodo
+  function removeNode(path) {
+    const parts = path.split('/').filter(Boolean);
+    let parentPath = '/';
+    if (parts.length > 1) {
+      parentPath = '/' + parts.slice(0, -1).join('/');
+    }
+    const parent = getNode(parentPath);
+    if (!parent || parent.type !== 'dir') return false;
+    const name = parts[parts.length -1];
+    if (!parent.children[name]) return false;
+    delete parent.children[name];
+    return true;
+  }
+
+  // Función para actualizar scroll abajo automático
+  function scrollToBottom() {
+    output.scrollTop = output.scrollHeight;
+  }
+
+  // Funciones para el editor modal
+  function openEditor(path) {
+    editingFilePath = path;
+    let node = getNode(path);
+    if (!node) {
+      // Crear archivo nuevo vacío
+      addNode(path, {type: 'file', content: ''});
+      node = getNode(path);
+    }
+    editorTextarea.value = node.content;
+    editorModal.style.display = 'flex';
+    editorTextarea.focus();
+  }
+  function closeEditor(save) {
+    if (save) {
+      let node = getNode(editingFilePath);
+      if (node && node.type === 'file') {
+        node.content = editorTextarea.value;
+      }
+    }
+    editingFilePath = null;
+    editorModal.style.display = 'none';
+    showPrompt();
+  }
+
+  saveEditBtn.addEventListener('click', () => closeEditor(true));
+  cancelEditBtn.addEventListener('click', () => closeEditor(false));
+
+  // Comandos
+  const commands = {
+    login: {
+      description: "Iniciar sesión: login [usuario]",
+      exec: (args) => {
+        if (currentUser) return `Ya estás logueado como ${currentUser.username}. Usa logout para salir.`;
+        if (!args[0]) return `Uso: login [usuario]`;
+        if (args[0] !== validUser.username) return `Usuario no encontrado.`;
+        output.textContent += "Ingrese contraseña: ";
+        hideInput();
+
+        return new Promise(resolve => {
+          // Leer password sin eco
+          commandInput.disabled = false;
+          commandInput.value = '';
+          commandInput.classList.remove('blink');
+          commandInput.type = 'password';
+          inputLine.style.display = 'flex';
+          commandInput.focus();
+
+          const onPasswordEnter = (e) => {
+            if (e.key === 'Enter') {
+              commandInput.removeEventListener('keydown', onPasswordEnter);
+              const pw = commandInput.value;
+              commandInput.value = '';
+              commandInput.type = 'text';
+              if (pw === validUser.password) {
+                currentUser = {...validUser};
+                resolve(`¡Bienvenido, ${currentUser.name}!`);
+              } else {
+                resolve(`Contraseña incorrecta.`);
+              }
+            }
+          };
+          commandInput.addEventListener('keydown', onPasswordEnter);
+        });
+      }
+    },
+    logout: {
+      description: "Cerrar sesión",
+      exec: () => {
+        if (!currentUser) return `No hay ningún usuario logueado.`;
+        const name = currentUser.name;
+        currentUser = null;
+        return `Usuario ${name} ha cerrado sesión.`;
+      }
+    },
+    help: {
+      description: "Muestra los comandos disponibles",
+      exec: () => {
+        let cmds = Object.entries(commands).map(([cmd, info]) => `${cmd} - ${info.description}`).join('\n');
+        return `Comandos disponibles:\n${cmds}`;
+      }
+    },
+    info: {
+      description: "Muestra información del sistema simulado",
+      exec: () => {
+        return `SimKernel Ultra Avanzado v2.1\nSimulación de kernel en JS\nAutor: Juárez Pérez José de Jesús\nFecha: ${new Date().toLocaleDateString()}`;
+      }
+    },
+    clear: {
+      description: "Limpia la pantalla",
+      exec: () => {
+        output.textContent = '';
+        return null;
+      }
+    },
+    date: {
+      description: "Muestra la fecha y hora actual",
+      exec: () => {
+        return new Date().toString();
+      }
+    },
+    echo: {
+      description: "Imprime texto: echo [texto]",
+      exec: (args) => {
+        return args.join(' ');
+      }
+    },
+    ls: {
+      description: "Lista archivos en el directorio actual o dado",
+      exec: (args) => {
+        let path = args[0] ? normalizePath(args[0]) : currentPath;
+        let node = getNode(path);
+        if (!node) return `No existe el directorio: ${path}`;
+        if (node.type !== 'dir') return `${path} no es un directorio`;
+        let list = Object.entries(node.children).map(([name, child]) => {
+          return child.type === 'dir' ? name + '/' : name;
+        });
+        return list.join('  ') || "(vacío)";
+      }
+    },
+    cd: {
+      description: "Cambia el directorio actual",
+      exec: (args) => {
+        if (!args[0]) return `Uso: cd [directorio]`;
+        let path = normalizePath(args[0]);
+        let node = getNode(path);
+        if (!node) return `No existe el directorio: ${path}`;
+        if (node.type !== 'dir') return `${path} no es un directorio`;
+        currentPath = path;
+        return null;
+      }
+    },
+    mkdir: {
+      description: "Crea un directorio",
+      exec: (args) => {
+        if (!args[0]) return `Uso: mkdir [nombre]`;
+        let path = normalizePath(args[0]);
+        if (getNode(path)) return `Ya existe: ${path}`;
+        let ok = addNode(path, { type: 'dir', children: {} });
+        return ok ? null : `Error creando directorio`;
+      }
+    },
+    touch: {
+      description: "Crea un archivo vacío",
+      exec: (args) => {
+        if (!args[0]) return `Uso: touch [nombre]`;
+        let path = normalizePath(args[0]);
+        if (getNode(path)) return `Ya existe: ${path}`;
+        let ok = addNode(path, { type: 'file', content: '' });
+        return ok ? null : `Error creando archivo`;
+      }
+    },
+    cat: {
+      description: "Muestra contenido de archivo",
+      exec: (args) => {
+        if (!args[0]) return `Uso: cat [archivo]`;
+        let path = normalizePath(args[0]);
+        let node = getNode(path);
+        if (!node) return `No existe el archivo: ${path}`;
+        if (node.type !== 'file') return `${path} no es un archivo`;
+        return node.content || "(archivo vacío)";
+      }
+    },
+    rm: {
+      description: "Elimina archivo o directorio vacío",
+      exec: (args) => {
+        if (!args[0]) return `Uso: rm [ruta]`;
+        let path = normalizePath(args[0]);
+        let node = getNode(path);
+        if (!node) return `No existe: ${path}`;
+        if (node.type === 'dir' && Object.keys(node.children).length > 0) return `Directorio no vacío: ${path}`;
+        let ok = removeNode(path);
+        return ok ? null : `Error eliminando: ${path}`;
+      }
+    },
+    memory: {
+      description: "Muestra memoria simulada",
+      exec: () => {
+        const total = 8192;
+        const used = Math.floor(Math.random() * total);
+        const free = total - used;
+        return `Memoria total: ${total}MB\nMemoria usada: ${used}MB\nMemoria libre: ${free}MB`;
+      }
+    },
+    reboot: {
+      description: "Reinicia el sistema (simulación)",
+      exec: async () => {
+        output.textContent += "Reiniciando sistema...\n";
+        hideInput();
+        currentUser = null;
+        currentPath = '/';
+        guessGameActive = false;
+        guessGameNumber = null;
+        guessGameAttempts = 0;
+        await bootSequence();
+        return null;
+      }
+    },
+    edit: {
+      description: "Editar archivo: edit [archivo]",
+      exec: (args) => {
+        if (!args[0]) return `Uso: edit [archivo]`;
+        let path = normalizePath(args[0]);
+        openEditor(path);
+        return null;
+      }
+    },
+    write: {
+      description: "Escribe texto en archivo (sobrescribe): write [archivo] [texto]",
+      exec: (args) => {
+        if (args.length < 2) return `Uso: write [archivo] [texto]`;
+        let path = normalizePath(args[0]);
+        let text = args.slice(1).join(' ');
+        let node = getNode(path);
+        if (!node) {
+          addNode(path, {type:'file', content: text});
+          return null;
+        }
+        if (node.type !== 'file') return `${path} no es un archivo`;
+        node.content = text;
+        return null;
+      }
+    },
+    append: {
+      description: "Agrega texto a archivo: append [archivo] [texto]",
+      exec: (args) => {
+        if (args.length < 2) return `Uso: append [archivo] [texto]`;
+        let path = normalizePath(args[0]);
+        let text = args.slice(1).join(' ');
+        let node = getNode(path);
+        if (!node) {
+          addNode(path, {type:'file', content: text});
+          return null;
+        }
+        if (node.type !== 'file') return `${path} no es un archivo`;
+        node.content += text;
+        return null;
+      }
+    },
+    guessgame: {
+      description: "Juego: adivina el número entre 1 y 100",
+      exec: () => {
+        if (guessGameActive) return "El juego ya está activo. Escribe un número para adivinar.";
+        guessGameActive = true;
+        guessGameNumber = Math.floor(Math.random() * 100) + 1;
+        guessGameAttempts = 0;
+        return "¡Juego iniciado! Adivina el número entre 1 y 100:";
+      }
+    }
+  };
+
+  async function processCommand(input) {
+    if (!input.trim()) return;
+
+    if (guessGameActive) {
+      let guess = parseInt(input.trim());
+      if (isNaN(guess)) {
+        output.textContent += "Por favor ingresa un número válido.\n";
+      } else {
+        guessGameAttempts++;
+        if (guess === guessGameNumber) {
+          output.textContent += `¡Correcto! Adivinaste el número en ${guessGameAttempts} intentos.\n`;
+          guessGameActive = false;
+          guessGameNumber = null;
+          guessGameAttempts = 0;
+        } else if (guess < guessGameNumber) {
+          output.textContent += "Muy bajo. Intenta de nuevo:\n";
+        } else {
+          output.textContent += "Muy alto. Intenta de nuevo:\n";
+        }
+      }
+      scrollToBottom();
+      commandInput.value = '';
+      return;
+    }
+
+    output.textContent += '> ' + input + '\n';
+
+    commandHistory.push(input);
+    historyIndex = commandHistory.length;
+
+    const [cmd, ...args] = input.trim().split(' ');
+    const command = commands[cmd.toLowerCase()];
+
+    if (command) {
+      commandInput.disabled = true;
+      commandInput.classList.remove('blink');
+
+      let result = command.exec(args);
+      if (result instanceof Promise) result = await result;
+
+      if (result !== null) {
+        output.textContent += result + '\n';
+      }
+
+      commandInput.disabled = false;
+      commandInput.classList.add('blink');
+      commandInput.focus();
+    } else {
+      output.textContent += `Comando no encontrado: ${cmd}\n`;
+    }
+
+    scrollToBottom();
+  }
+
+  commandInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      processCommand(commandInput.value);
+      commandInput.value = '';
+    } else if (e.key === 'ArrowUp') {
+      if (commandHistory.length === 0) return;
+      if (historyIndex > 0) historyIndex--;
+      commandInput.value = commandHistory[historyIndex] || '';
+      e.preventDefault();
+    } else if (e.key === 'ArrowDown') {
+      if (commandHistory.length === 0) return;
+      if (historyIndex < commandHistory.length -1) {
+        historyIndex++;
+        commandInput.value = commandHistory[historyIndex];
+      } else {
+        historyIndex = commandHistory.length;
+        commandInput.value = '';
+      }
+      e.preventDefault();
+    }
+  });
+
+  async function bootSequence() {
+    output.textContent = '';
+    for (const msg of bootMessages) {
+      await typeText(msg);
+    }
+    await typeText(`Bienvenido, Juárez Pérez José de Jesús.\nPara iniciar sesión escribe: login admin\nPara ayuda escribe: help\n`);
+    showPrompt();
+  }
+
+  bootSequence();
+</script>
+
+</body>
+</html>
