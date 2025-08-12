@@ -168,10 +168,6 @@
   let guessGameNumber = null;
   let guessGameAttempts = 0;
 
-  // Estado para modo ingreso de contraseña
-  let passwordMode = false;
-  let passwordResolve = null;
-
   // Mensajes de arranque con delay y efecto tecleo
   const bootMessages = [
     "Iniciando SimKernel Ultra Avanzado v2.1...",
@@ -196,15 +192,10 @@
 
   // Función para mostrar el prompt personalizado y enfocar el input
   function showPrompt() {
-    if (passwordMode) {
-      document.getElementById('prompt').textContent = `Password:`;
-      commandInput.type = 'password';
-    } else if (currentUser) {
+    if (currentUser) {
       document.getElementById('prompt').textContent = `${currentUser.username}@simkernel:${currentPath}$`;
-      commandInput.type = 'text';
     } else {
       document.getElementById('prompt').textContent = `guest@simkernel:${currentPath}$`;
-      commandInput.type = 'text';
     }
     inputLine.style.display = 'flex';
     commandInput.disabled = false;
@@ -217,27 +208,16 @@
     inputLine.style.display = 'none';
   }
 
-  // Mejor función para normalizar rutas con manejo de "." y ".."
+  // Normaliza rutas para simplificar la navegación
   function normalizePath(path) {
     if (!path) return currentPath;
-    let newPath = path.startsWith('/') ? path : (currentPath === '/' ? '/' + path : currentPath + '/' + path);
-    const parts = newPath.split('/').filter(Boolean);
-    const stack = [];
-    for (const part of parts) {
-      if (part === '.') continue;
-      else if (part === '..') {
-        if (stack.length > 0) stack.pop();
-      } else {
-        stack.push(part);
-      }
-    }
-    return '/' + stack.join('/');
+    if (path.startsWith('/')) return path;
+    if (currentPath === '/') return '/' + path;
+    return currentPath + '/' + path;
   }
 
   // Obtener objeto nodo del filesystem dado un path
   function getNode(path) {
-    if (!path.startsWith('/')) return null;
-    if (path === '/') return fileSystem['/'];
     const parts = path.split('/').filter(Boolean);
     let node = fileSystem['/'];
     for (const part of parts) {
@@ -250,23 +230,19 @@
   // Agregar nodo al filesystem
   function addNode(path, node) {
     const parts = path.split('/').filter(Boolean);
-    if (parts.length === 0) return false; // no se puede crear raíz
     let parentPath = '/';
     if (parts.length > 1) {
       parentPath = '/' + parts.slice(0, -1).join('/');
     }
     const parent = getNode(parentPath);
     if (!parent || parent.type !== 'dir') return false;
-    const name = parts[parts.length - 1];
-    if (!isValidName(name)) return false;
-    parent.children[name] = node;
+    parent.children[parts[parts.length -1]] = node;
     return true;
   }
 
   // Eliminar nodo
   function removeNode(path) {
     const parts = path.split('/').filter(Boolean);
-    if (parts.length === 0) return false; // no eliminar raíz
     let parentPath = '/';
     if (parts.length > 1) {
       parentPath = '/' + parts.slice(0, -1).join('/');
@@ -277,12 +253,6 @@
     if (!parent.children[name]) return false;
     delete parent.children[name];
     return true;
-  }
-
-  // Validar nombre válido para archivo/directorio
-  function isValidName(name) {
-    // No vacío, no tenga "/", no caracteres especiales simples
-    return /^[a-zA-Z0-9._-]+$/.test(name);
   }
 
   // Función para actualizar scroll abajo automático
@@ -326,24 +296,24 @@
         if (currentUser) return `Ya estás logueado como ${currentUser.username}. Usa logout para salir.`;
         if (!args[0]) return `Uso: login [usuario]`;
         if (args[0] !== validUser.username) return `Usuario no encontrado.`;
-        output.textContent += "Ingrese contraseña:\n";
+        output.textContent += "Ingrese contraseña: ";
         hideInput();
-        passwordMode = true;
 
         return new Promise(resolve => {
+          // Leer password sin eco
           commandInput.disabled = false;
           commandInput.value = '';
           commandInput.classList.remove('blink');
-          showPrompt();
+          commandInput.type = 'password';
+          inputLine.style.display = 'flex';
+          commandInput.focus();
 
           const onPasswordEnter = (e) => {
             if (e.key === 'Enter') {
               commandInput.removeEventListener('keydown', onPasswordEnter);
               const pw = commandInput.value;
               commandInput.value = '';
-              passwordMode = false;
-              showPrompt();
-
+              commandInput.type = 'text';
               if (pw === validUser.password) {
                 currentUser = {...validUser};
                 resolve(`¡Bienvenido, ${currentUser.name}!`);
@@ -422,12 +392,6 @@
         return null;
       }
     },
-    pwd: {
-      description: "Muestra el directorio actual",
-      exec: () => {
-        return currentPath;
-      }
-    },
     mkdir: {
       description: "Crea un directorio",
       exec: (args) => {
@@ -435,8 +399,7 @@
         let path = normalizePath(args[0]);
         if (getNode(path)) return `Ya existe: ${path}`;
         let ok = addNode(path, { type: 'dir', children: {} });
-        if (!ok) return `Error creando directorio o nombre inválido`;
-        return null;
+        return ok ? null : `Error creando directorio`;
       }
     },
     touch: {
@@ -446,8 +409,7 @@
         let path = normalizePath(args[0]);
         if (getNode(path)) return `Ya existe: ${path}`;
         let ok = addNode(path, { type: 'file', content: '' });
-        if (!ok) return `Error creando archivo o nombre inválido`;
-        return null;
+        return ok ? null : `Error creando archivo`;
       }
     },
     cat: {
@@ -533,7 +495,7 @@
           return null;
         }
         if (node.type !== 'file') return `${path} no es un archivo`;
-        node.content += (node.content.length > 0 ? '\n' : '') + text;
+        node.content += text;
         return null;
       }
     },
@@ -571,11 +533,6 @@
       }
       scrollToBottom();
       commandInput.value = '';
-      return;
-    }
-
-    if (passwordMode) {
-      // Si está en modo password, manejarlo solo en login command
       return;
     }
 
@@ -645,8 +602,3 @@
 
 </body>
 </html>
-
-
-</body>
-</html>
-
